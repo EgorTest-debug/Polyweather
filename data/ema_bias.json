@@ -1,0 +1,122 @@
+{
+  "seoul": {
+    "ema_bias": 1.12,
+    "last_updated": "2026-04-28",
+    "last_error": 1.6000000000000014,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 1.6000000000000014,
+        "bias": 1.12
+      }
+    ]
+  },
+  "singapore": {
+    "ema_bias": 1.6,
+    "last_updated": "2026-04-28",
+    "last_error": 1.0,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 1.0,
+        "bias": 1.6
+      }
+    ]
+  },
+  "toronto": {
+    "ema_bias": 0.2,
+    "last_updated": "2026-04-28",
+    "last_error": 0.5,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 0.5,
+        "bias": 0.2
+      }
+    ]
+  },
+  "tokyo": {
+    "ema_bias": 0.74,
+    "last_updated": "2026-04-28",
+    "last_error": -0.10000000000000142,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": -0.10000000000000142,
+        "bias": 0.74
+      }
+    ]
+  },
+  "tel-aviv": {
+    "ema_bias": -0.16,
+    "last_updated": "2026-04-28",
+    "last_error": -0.3999999999999986,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": -0.3999999999999986,
+        "bias": -0.16
+      }
+    ]
+  },
+  "helsinki": {
+    "ema_bias": 1.54,
+    "last_updated": "2026-04-28",
+    "last_error": 2.2,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 2.2,
+        "bias": 1.54
+      }
+    ]
+  },
+  "ankara": {
+    "ema_bias": 1.9,
+    "last_updated": "2026-04-28",
+    "last_error": 2.8000000000000007,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 2.8000000000000007,
+        "bias": 1.9
+      }
+    ]
+  },
+  "sao-paulo": {
+    "ema_bias": 0.88,
+    "last_updated": "2026-04-28",
+    "last_error": 0.6999999999999993,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 0.6999999999999993,
+        "bias": 0.88
+      }
+    ]
+  },
+  "buenos-aires": {
+    "ema_bias": 0.82,
+    "last_updated": "2026-04-28",
+    "last_error": 1.0,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 1.0,
+        "bias": 0.82
+      }
+    ]
+  },
+  "wellington": {
+    "ema_bias": 0.66,
+    "last_updated": "2026-04-28",
+    "last_error": 0.3000000000000007,
+    "error_history": [
+      {
+        "date": "2026-04-27",
+        "error": 0.3000000000000007,
+        "bias": 0.66
+      }
+    ]
+  }
+}
