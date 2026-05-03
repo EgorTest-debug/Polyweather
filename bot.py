@@ -333,7 +333,7 @@ def main():
     print(f"  Cities:   {len(CITIES)}")
     print(f"  Balance:  ${state['balance']:.2f}")
     print(f"  Interval: {args.interval} min")
-    print(f"  Forecast: ECMWF 50-member ensemble + Markov bias")
+    print(f"  Forecast: ECMWF ensemble + LightGBM calibration")
     print(f"  Logging:  logs/polyweather_*.log")
     if not args.live:
         print(f"  {Y}Use --live to place real trades{X}")

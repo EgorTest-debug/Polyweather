@@ -1,8 +1,14 @@
 .env
+data/ema_bias.json
+data/model_forecasts.csv
+data/polymarket_winners.csv
 data/state.json
+data/wu_historical.csv
+data/wu_progress.json
 logs/
 __pycache__/
 *.pyc
 .DS_Store
 TODO.md
 .venv
+test_clob.py

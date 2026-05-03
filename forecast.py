@@ -1,15 +1,13 @@
 """
-ECMWF Ensemble probability engine with adaptive Markov bias correction.
+ECMWF Ensemble probability engine with LightGBM calibration.
 
 Uses ECMWF IFS 50-member ensemble via ensemble-api.open-meteo.com.
 Probability = direct count of members in bucket / total members.
 
-Bias correction: Exponential Moving Average (EMA) of recent ECMWF errors
-vs Wunderground (Polymarket resolution source). Updates dynamically —
-if yesterday ECMWF undershot by 3°, today's correction increases.
+Primary calibration: LightGBM model trained on 11 weather models + context
+features. Predicts calibrated T_max, shifts raw ensemble members.
 
-Static bias_correction in cities.py is used as fallback when no
-recent error data is available.
+Fallback calibration: Markov EMA bias correction (if LightGBM unavailable).
 """
 
 import json
@@ -28,6 +26,15 @@ from cities import CITIES, MONTHS
 log = logging.getLogger("polyweather")
 
 ENSEMBLE_BASE = "https://ensemble-api.open-meteo.com/v1/ensemble"
+
+# Try to import predictor — gracefully disable if model not available
+try:
+    from predictor import predict_temperature, shift_ensemble_members
+    LGBM_AVAILABLE = True
+    log.info("LightGBM predictor loaded")
+except ImportError:
+    LGBM_AVAILABLE = False
+    log.info("predictor.py not found — using Markov bias only")
 
 REGION_MODELS = {
     "default":  ("ecmwf_ifs025", 50),
@@ -272,24 +279,59 @@ def fetch_ensemble(city_key: str, forecast_days: int = 4,
                 log.warning(f"[{cfg['name']}] No ensemble members in response")
                 break
 
-            # Adaptive Markov bias correction (EMA of recent errors)
-            bias = get_adaptive_bias(city_key)
+            # Get Markov bias only if LightGBM unavailable
+            markov_bias = 0.0
+            if not LGBM_AVAILABLE:
+                markov_bias = get_adaptive_bias(city_key)
+
+            today = datetime.now(timezone.utc).date()
+            tomorrow = today + timedelta(days=1)
 
             for i, d_str in enumerate(dates_raw):
                 d = date.fromisoformat(d_str)
-                highs = []
+
+                # Only process D+1 — LightGBM trained on previous_day=1
+                if d != tomorrow:
+                    continue
+
+                # Collect RAW ensemble members (no correction)
+                raw_highs = []
                 for mk in member_keys:
                     vals = daily[mk]
                     if i < len(vals) and vals[i] is not None:
-                        highs.append(round(vals[i] + bias, 1))
+                        raw_highs.append(round(vals[i], 1))
 
-                if highs:
-                    result[d] = EnsembleForecast(
-                        city_key=city_key,
-                        target_date=d,
-                        model=f"{model_name}+markov{bias:+.1f}",
-                        member_highs=highs,
-                    )
+                if not raw_highs:
+                    continue
+
+                raw_mean = statistics.mean(raw_highs)
+
+                # Try LightGBM calibration first
+                if LGBM_AVAILABLE:
+                    try:
+                        lgbm_pred = predict_temperature(city_key, d, raw_mean)
+                        if lgbm_pred is not None:
+                            highs = shift_ensemble_members(raw_highs, raw_mean, lgbm_pred)
+                            model_label = f"{model_name}+lgbm{lgbm_pred - raw_mean:+.1f}"
+                            result[d] = EnsembleForecast(
+                                city_key=city_key,
+                                target_date=d,
+                                model=model_label,
+                                member_highs=highs,
+                            )
+                            continue
+                    except Exception as e:
+                        log.debug(f"[{cfg['name']}] LightGBM failed, falling back to Markov: {e}")
+
+                # Fallback: Markov bias correction
+                highs = [round(t + markov_bias, 1) for t in raw_highs]
+                model_label = f"{model_name}+markov{markov_bias:+.1f}"
+                result[d] = EnsembleForecast(
+                    city_key=city_key,
+                    target_date=d,
+                    model=model_label,
+                    member_highs=highs,
+                )
 
             break
 
@@ -320,25 +362,14 @@ def fetch_metar_temp(city_key: str) -> Optional[float]:
 
 # ─── Main entry point ─────────────────────────────────────
 
-def get_forecasts(city_key: str, days_ahead: int = 4) -> Dict[date, EnsembleForecast]:
-    forecasts = fetch_ensemble(city_key, forecast_days=max(days_ahead, 4))
+def get_forecasts(city_key: str, days_ahead: int = 2) -> Dict[date, EnsembleForecast]:
+    """Fetch ensemble forecasts. Only D+1 is reliable (LightGBM trained on previous_day=1)."""
+    forecasts = fetch_ensemble(city_key, forecast_days=max(days_ahead, 2))
 
     today = datetime.now(timezone.utc).date()
-    if today in forecasts:
-        observed = fetch_metar_temp(city_key)
-        if observed is not None:
-            fc = forecasts[today]
-            updated = [max(t, observed) for t in fc.member_highs]
-            forecasts[today] = EnsembleForecast(
-                city_key=city_key,
-                target_date=today,
-                model=fc.model + "+metar",
-                member_highs=updated,
-                fetched_at=fc.fetched_at,
-            )
-
-    target_dates = {today + timedelta(days=i) for i in range(days_ahead)}
-    return {d: fc for d, fc in forecasts.items() if d in target_dates}
+    # Only keep D+1 (tomorrow)
+    tomorrow = today + timedelta(days=1)
+    return {d: fc for d, fc in forecasts.items() if d == tomorrow}
 
 
 # ─── Quick test ────────────────────────────────────────────
@@ -348,16 +379,11 @@ if __name__ == "__main__":
     today = datetime.now(timezone.utc).date()
 
     for city in ["seoul", "singapore", "toronto"]:
-        print(f"\n{'='*70}")
+        print(f"\n{'='*50}")
         print(f"  {CITIES[city]['name']}")
-        print(f"{'='*70}")
+        print(f"{'='*50}")
 
-        # Show adaptive bias
-        bias = get_adaptive_bias(city)
-        static = CITIES[city].get("bias_correction", 0.0)
-        print(f"  Static bias: {static:+.1f}° | Adaptive (Markov): {bias:+.1f}°")
-
-        forecasts = get_forecasts(city, days_ahead=3)
+        forecasts = get_forecasts(city, days_ahead=2)
         for d, fc in sorted(forecasts.items()):
             horizon = (d - today).days
             print(f"\n  D+{horizon} {d}: {fc.n_members} members ({fc.model})")
@@ -369,12 +395,3 @@ if __name__ == "__main__":
                 prob = fc.prob_between(t, t)
                 bar = "#" * int(prob * 50)
                 print(f"    P({t:3d}C) = {prob:5.0%}  {bar}")
-
-    # Show EMA state
-    print(f"\n{'='*70}")
-    print(f"  EMA BIAS STATE")
-    print(f"{'='*70}")
-    state = _load_ema_state()
-    for city, cs in state.items():
-        last_err = cs.get("last_error", "?")
-        print(f"  {city:15s} | EMA={cs['ema_bias']:+.1f}° | last error={last_err}")
