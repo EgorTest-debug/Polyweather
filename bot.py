@@ -67,22 +67,15 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
     new_trades = 0
     exits_found = 0
 
-    # ── Risk check ─────────────────────────────────────
-    risk = check_risk(state, config)
-    if not risk["can_trade"]:
-        for r in risk["reasons"]:
-            warn(f"RISK BLOCK: {r}")
-        return state
-
     # ── Check exits (auto-resolution + price-based) ────
     print(f"\n{B}📤 Checking exits...{X}")
     all_forecasts = {}
 
     open_cities = set(p["city_key"] for p in positions.values() if p.get("status") == "open")
     for city in open_cities:
-        fcs = get_forecasts(city, days_ahead=4)
-        all_forecasts.update(fcs)
-        time.sleep(0.3)
+        fcs = get_forecasts(city, days_ahead=2)
+        for d, fc in fcs.items():
+            all_forecasts[(city, d)] = fc
 
     exits = check_exits(positions, config, all_forecasts)
     for ex in exits:

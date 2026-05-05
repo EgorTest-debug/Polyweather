@@ -182,33 +182,24 @@ def fetch_event(city_key: str, d: date) -> Optional[WeatherEvent]:
 # ─── CLOB depth check ─────────────────────────────────────
 
 def fetch_clob_depth(bucket: TempBucket) -> TempBucket:
-    """
-    Fetch real best bid/ask from Polymarket CLOB API.
-    Updates bucket in-place and returns it.
-    Falls back to Gamma prices if CLOB unavailable.
-    """
     if not bucket.token_id:
         return bucket
-
     try:
-        url = f"https://clob.polymarket.com/book?token_id={bucket.token_id}"
+        url = f"https://clob.polymarket.com/price?token_id={bucket.token_id}&side=BUY"
         resp = requests.get(url, timeout=(3, 5))
-        book = resp.json()
+        price = resp.json().get("price")
+        if price is not None:
+            bucket.best_ask = float(price)
 
-        bids = book.get("bids", [])
-        asks = book.get("asks", [])
-
-        if bids:
-            bucket.best_bid = float(bids[0]["price"])
-        if asks:
-            bucket.best_ask = float(asks[0]["price"])
-
-        if bucket.best_bid is not None and bucket.best_ask is not None:
-            bucket.spread = round(bucket.best_ask - bucket.best_bid, 4)
-
+        url2 = f"https://clob.polymarket.com/price?token_id={bucket.token_id}&side=SELL"
+        resp2 = requests.get(url2, timeout=(3, 5))
+        sell = resp2.json().get("price")
+        if sell is not None:
+            bucket.best_bid = float(sell)
+            if bucket.best_ask is not None:
+                bucket.spread = round(bucket.best_ask - bucket.best_bid, 4)
     except Exception as e:
-        log.debug(f"CLOB depth error for {bucket.market_id}: {e}")
-
+        log.debug(f"CLOB price error for {bucket.market_id}: {e}")
     return bucket
 
 

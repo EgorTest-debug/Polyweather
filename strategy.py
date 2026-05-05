@@ -411,13 +411,15 @@ def check_exits(
         # Forecast changed: model shifted out of bucket
         if reason is None and forecasts:
             target_d = date.fromisoformat(pos["target_date"])
-            fc = forecasts.get(target_d)
+            fc = forecasts.get((pos.get("city_key"), target_d)) or forecasts.get(target_d)
             if fc:
                 low = pos.get("bucket_low", -999)
                 high = pos.get("bucket_high", 999)
                 if low != -999 and high != 999:
                     mid_bucket = (low + high) / 2
-                    if abs(fc.mean - mid_bucket) > (high - low) + 2:
+                    diff = abs(fc.mean - mid_bucket)
+                    threshold = (high - low) + 2
+                    if diff > threshold:
                         reason = "forecast_changed"
 
         if reason:
