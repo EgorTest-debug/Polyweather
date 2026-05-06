@@ -123,7 +123,7 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
 
     # Build cooldown set — market_ids already in closed_trades (any reason)
     # Prevents re-entering same bucket after stop_loss
-    closed_market_ids = {t.get("market_id") for t in state.get("closed_trades", [])}
+    closed_market_ids = {t.get("market_id") for t in state.get("closed_trades", []) if t.get("market_id")}
 
     # ── Pass 1: collect ALL signals across all cities ──
     all_signals = []
@@ -173,6 +173,7 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
                   f"score={score:.3f} | edge={s.edge:+.0%} | "
                   f"prob={s.model_prob:.0%} | agree={s.agreement:.0%} | "
                   f"bet=${s.bet_size:.2f}")
+        sys.stdout.flush()
 
     cities_entered = set()
     for sig in all_signals:
