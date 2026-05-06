@@ -120,24 +120,23 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
 
     state["balance"] = round(balance, 2)
     state["positions"] = positions
-    risk = check_risk(state, config)
 
+    # Build cooldown set — market_ids already in closed_trades (any reason)
+    # Prevents re-entering same bucket after stop_loss
+    closed_market_ids = {t.get("market_id") for t in state.get("closed_trades", [])}
+
+    # ── Pass 1: collect ALL signals across all cities ──
+    all_signals = []
     for city_key in CITIES:
         cfg = CITIES[city_key]
         print(f"\n  {B}📍 {cfg['name']}{X} ", end="", flush=True)
 
-        city_count = sum(1 for p in positions.values()
-                        if p.get("city_key") == city_key and p.get("status") == "open")
-        if city_count >= config.max_per_city:
-            print(f"{D}[{city_count}/{config.max_per_city} positions]{X}")
-            continue
-
-        forecasts = get_forecasts(city_key, days_ahead=4)
+        forecasts = get_forecasts(city_key, days_ahead=2)
         if not forecasts:
             print(f"{R}no forecast{X}")
             continue
 
-        events = scan_city(city_key, days_ahead=4)
+        events = scan_city(city_key, days_ahead=2)
         if not events:
             print(f"{D}no markets{X}")
             continue
@@ -145,71 +144,96 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
         print(f"{G}{len(events)} events{X}")
 
         for event in events:
-            if not risk["can_trade"]:
-                break
-
-            horizon = (event.target_date - today).days
             signals = detect_signals(event, forecasts, config, balance)
-
             for sig in signals:
-                if not risk["can_trade"]:
-                    break
-
+                # Skip if already open or in cooldown
                 if sig.bucket.market_id in positions:
                     continue
-
-                open_count = sum(1 for p in positions.values() if p.get("status") == "open")
-                if open_count >= config.max_positions:
-                    break
-
-                b = sig.bucket
-                low_s = f"{b.temp_low:.0f}" if b.temp_low > -999 else "≤"
-                high_s = f"{b.temp_high:.0f}" if b.temp_high < 999 else "+"
-
-                print(f"\n    {G}{B}SIGNAL{X} D+{horizon} | "
-                      f"{low_s}–{high_s}°{b.unit} | "
-                      f"edge {sig.edge:+.0%} | "
-                      f"model {sig.model_prob:.0%} vs mkt ${sig.market_price:.3f} | "
-                      f"bet ${sig.bet_size:.2f}")
-                print(f"    {D}ensemble: {sig.forecast.n_members} members, "
-                      f"mean {sig.forecast.mean:.1f}°, std {sig.forecast.std:.1f}°, "
-                      f"agreement {sig.agreement:.0%}{X}")
-
-                order = executor.buy_yes(
-                    token_id=b.token_id,
-                    price=sig.market_price,
-                    size=sig.bet_size,
-                )
-
-                balance -= sig.bet_size
-                positions[b.market_id] = {
-                    "city_key":      sig.city_key,
-                    "target_date":   sig.target_date.isoformat(),
-                    "question":      b.question,
-                    "token_id":      b.token_id,
-                    "entry_price":   sig.market_price,
-                    "shares":        round(sig.bet_size / sig.market_price, 2),
-                    "cost":          sig.bet_size,
-                    "model_prob":    sig.model_prob,
-                    "edge":          sig.edge,
-                    "agreement":     sig.agreement,
-                    "bucket_low":    b.temp_low,
-                    "bucket_high":   b.temp_high,
-                    "stop_price":    round(sig.market_price * (1 - config.stop_loss_pct), 4),
-                    "end_date":      event.end_date,
-                    "opened_at":     datetime.now(timezone.utc).isoformat(),
-                    "status":        "open",
-                }
-                state["total_trades"] += 1
-                new_trades += 1
-
-                state["balance"] = round(balance, 2)
-                state["positions"] = positions
-                risk = check_risk(state, config)
-
-                ok(f"Position opened | ${sig.bet_size:.2f}")
+                if sig.bucket.market_id in closed_market_ids:
+                    continue
+                sig._end_date = event.end_date
+                all_signals.append(sig)
 
         time.sleep(0.3)
+
+    # ── Pass 2: rank by score and enter best signals ───
+    all_signals.sort(
+        key=lambda s: s.edge * s.model_prob * s.agreement,
+        reverse=True
+    )
+
+    if all_signals:
+        print(f"\n{B}📊 Ranked signals ({len(all_signals)} total):{X}")
+        for s in all_signals:
+            b = s.bucket
+            low_s = f"{b.temp_low:.0f}" if b.temp_low > -999 else "≤"
+            high_s = f"{b.temp_high:.0f}" if b.temp_high < 999 else "+"
+            score = s.edge * s.model_prob * s.agreement
+            print(f"  {CITIES[s.city_key]['name']:12s} {low_s}–{high_s}° | "
+                  f"score={score:.3f} | edge={s.edge:+.0%} | "
+                  f"prob={s.model_prob:.0%} | agree={s.agreement:.0%} | "
+                  f"bet=${s.bet_size:.2f}")
+
+    cities_entered = set()
+    for sig in all_signals:
+        risk = check_risk(state, config)
+        if not risk["can_trade"]:
+            warn(f"RISK BLOCK: {', '.join(risk['reasons'])}")
+            break
+
+        # One position per city per scan
+        if sig.city_key in cities_entered:
+            continue
+
+        b = sig.bucket
+        today = datetime.now(timezone.utc).date()
+        horizon = (sig.target_date - today).days
+        low_s = f"{b.temp_low:.0f}" if b.temp_low > -999 else "≤"
+        high_s = f"{b.temp_high:.0f}" if b.temp_high < 999 else "+"
+
+        print(f"\n    {G}{B}SIGNAL{X} D+{horizon} | "
+              f"{low_s}–{high_s}°{b.unit} | "
+              f"edge {sig.edge:+.0%} | "
+              f"model {sig.model_prob:.0%} vs mkt ${sig.market_price:.3f} | "
+              f"bet ${sig.bet_size:.2f}")
+        print(f"    {D}ensemble: {sig.forecast.n_members} members, "
+              f"mean {sig.forecast.mean:.1f}°, std {sig.forecast.std:.1f}°, "
+              f"agreement {sig.agreement:.0%}{X}")
+
+        order = executor.buy_yes(
+            token_id=b.token_id,
+            price=sig.market_price,
+            size=sig.bet_size,
+        )
+
+        balance -= sig.bet_size
+        positions[b.market_id] = {
+            "city_key":      sig.city_key,
+            "target_date":   sig.target_date.isoformat(),
+            "question":      b.question,
+            "token_id":      b.token_id,
+            "entry_price":   sig.market_price,
+            "shares":        round(sig.bet_size / sig.market_price, 2),
+            "cost":          sig.bet_size,
+            "model_prob":    sig.model_prob,
+            "edge":          sig.edge,
+            "agreement":     sig.agreement,
+            "bucket_low":    b.temp_low,
+            "bucket_high":   b.temp_high,
+            "stop_price":    round(sig.market_price * (1 - config.stop_loss_pct), 4),
+            "end_date":      getattr(sig, '_end_date', ''),
+            "opened_at":     datetime.now(timezone.utc).isoformat(),
+            "status":        "open",
+            "market_id":     b.market_id,
+        }
+        state["total_trades"] += 1
+        new_trades += 1
+        cities_entered.add(sig.city_key)
+
+        state["balance"] = round(balance, 2)
+        state["positions"] = positions
+
+        ok(f"Position opened | ${sig.bet_size:.2f}")
 
     # ── Save state ─────────────────────────────────────
     state["balance"] = round(balance, 2)

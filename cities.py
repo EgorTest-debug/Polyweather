@@ -5,8 +5,9 @@ We pick "second tier" cities with decent liquidity ($30-70K/day) but less bot co
 """
 
 CITIES = {
-    # bias_correction: how much to ADD to ECMWF to match Wunderground resolution
-    # Calculated from 14 days of ECMWF vs Polymarket winner data (April 2026)
+    # Helsinki, Singapore, Tel Aviv, Tokyo, Sao Paulo → ICON (39 members, лучший MAE)
+    # Toronto → GFS (30 members, лучший MAE)  
+    # Остальные → ICON (лучше ECMWF, есть ensemble)
 
     # ── Asia ──────────────────────────────────────────────
     "seoul": {
@@ -16,7 +17,8 @@ CITIES = {
         "station":   "RKSI",        # Incheon International
         "unit":      "C",
         "timezone":  "Asia/Seoul",
-        "bias_correction": 0.8,     # ECMWF bias=-0.8, MAE=1.0
+        "bias_correction": 0.8,
+        "ensemble_model":  "icon_seamless", 
     },
     "tokyo": {
         "name":      "Tokyo",
@@ -25,7 +27,8 @@ CITIES = {
         "station":   "RJTT",        # Haneda
         "unit":      "C",
         "timezone":  "Asia/Tokyo",
-        "bias_correction": 1.3,     # ECMWF bias=-1.3, MAE=1.4
+        "bias_correction": 1.3,
+        "ensemble_model":  "icon_seamless",   
     },
     "singapore": {
         "name":      "Singapore",
@@ -34,7 +37,8 @@ CITIES = {
         "station":   "WSSS",        # Changi
         "unit":      "C",
         "timezone":  "Asia/Singapore",
-        "bias_correction": 2.0,     # ECMWF bias=-2.0, MAE=2.0
+        "bias_correction": 2.0,
+        "ensemble_model":  "icon_seamless",   
     },
     "tel-aviv": {
         "name":      "Tel Aviv",
@@ -43,7 +47,8 @@ CITIES = {
         "station":   "LLBG",        # Ben Gurion
         "unit":      "C",
         "timezone":  "Asia/Jerusalem",
-        "bias_correction": 0.0,     # No data yet — conservative estimate
+        "bias_correction": 0.0,
+        "ensemble_model":  "icon_seamless",  
     },
 
     # ── Europe ────────────────────────────────────────────
@@ -54,7 +59,8 @@ CITIES = {
         "station":   "EFHK",        # Helsinki-Vantaa
         "unit":      "C",
         "timezone":  "Europe/Helsinki",
-        "bias_correction": 1.1,     # ECMWF bias=-1.1, MAE=1.3
+        "bias_correction": 1.1,
+        "ensemble_model":  "icon_seamless", 
     },
     "ankara": {
         "name":      "Ankara",
@@ -63,7 +69,8 @@ CITIES = {
         "station":   "LTAC",        # Esenboğa
         "unit":      "C",
         "timezone":  "Europe/Istanbul",
-        "bias_correction": 1.3,     # No data yet — conservative estimate
+        "bias_correction": 1.3,
+        "ensemble_model":  "icon_seamless",
     },
 
     # ── Americas ──────────────────────────────────────────
@@ -74,7 +81,8 @@ CITIES = {
         "station":   "CYYZ",        # Pearson International
         "unit":      "C",
         "timezone":  "America/Toronto",
-        "bias_correction": 0.0,     # ECMWF bias=+0.3, MAE=1.4 — best calibrated
+        "bias_correction": 0.0,
+        "ensemble_model":  "gfs_seamless",  
     },
     "sao-paulo": {
         "name":      "Sao Paulo",
@@ -83,7 +91,8 @@ CITIES = {
         "station":   "SBGR",        # Guarulhos
         "unit":      "C",
         "timezone":  "America/Sao_Paulo",
-        "bias_correction": 1.0,     # No data yet — conservative estimate
+        "bias_correction": 1.0, 
+        "ensemble_model":  "icon_seamless",
     },
     "buenos-aires": {
         "name":      "Buenos Aires",
@@ -92,7 +101,8 @@ CITIES = {
         "station":   "SAEZ",        # Ezeiza
         "unit":      "C",
         "timezone":  "America/Argentina/Buenos_Aires",
-        "bias_correction": 0.7,     # No data yet — conservative estimate
+        "bias_correction": 0.7,
+        "ensemble_model":  "icon_seamless",
     },
 
     # ── Oceania ───────────────────────────────────────────
@@ -103,7 +113,8 @@ CITIES = {
         "station":   "NZWN",        # Wellington International
         "unit":      "C",
         "timezone":  "Pacific/Auckland",
-        "bias_correction": 0.9,     # No data yet — conservative estimate
+        "bias_correction": 0.9, 
+        "ensemble_model":  "icon_seamless",
     },
 }
 

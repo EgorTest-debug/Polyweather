@@ -1,7 +1,9 @@
 """
-ECMWF Ensemble probability engine with LightGBM calibration.
+Ensemble probability engine with LightGBM calibration.
 
-Uses ECMWF IFS 50-member ensemble via ensemble-api.open-meteo.com.
+Uses per-city ensemble models via ensemble-api.open-meteo.com:
+- ICON (39 members) for most cities
+- GFS (31 members) for Toronto
 Probability = direct count of members in bucket / total members.
 
 Primary calibration: LightGBM model trained on 11 weather models + context
@@ -35,11 +37,6 @@ try:
 except ImportError:
     LGBM_AVAILABLE = False
     log.info("predictor.py not found — using Markov bias only")
-
-REGION_MODELS = {
-    "default":  ("ecmwf_ifs025", 50),
-    "toronto":  ("ecmwf_ifs025", 50),
-}
 
 # EMA smoothing factor: 0.4 = responsive (adapts in 2-3 days), 0.2 = smoother
 EMA_ALPHA = 0.4
@@ -244,7 +241,7 @@ class EnsembleForecast:
 def fetch_ensemble(city_key: str, forecast_days: int = 4,
                    retries: int = 3) -> Dict[date, EnsembleForecast]:
     cfg = CITIES[city_key]
-    model_name, _ = REGION_MODELS.get(city_key, REGION_MODELS["default"])
+    model_name = CITIES[city_key].get("ensemble_model", "icon_seamless")
 
     url = (
         f"{ENSEMBLE_BASE}"

@@ -1,136 +1,111 @@
 # 🌤 PolyWeather
 
-Weather trading bot for Polymarket. Uses ensemble weather models (ECMWF 51-member, GFS 31-member) to find mispriced temperature markets and trade them with limit orders (0% maker fee).
+Weather trading bot for Polymarket. Uses ECMWF 50-member ensemble + LightGBM calibration to find mispriced temperature markets.
 
-## Quick Start
-
-```bash
-# 1. Clone and install
-git clone <your-repo-url>
-cd polyweather
-pip install -r requirements.txt
-
-# 2. Test forecasts (no money needed)
-python bot.py --test-forecast
-
-# 3. Run paper mode (no real trades)
-python bot.py --once          # single scan
-python bot.py                 # continuous loop (30 min interval)
-
-# 4. Go live (after paper testing)
-cp .env.example .env
-# Edit .env with your Polymarket credentials
-python bot.py --live --once   # single live scan
-python bot.py --live          # continuous live trading
-```
+**Status:** Paper trading / pre-production
 
 ## How It Works
 
 ```
-Open-Meteo Ensemble API          Polymarket Gamma + CLOB API
-  (ECMWF 51 / GFS 31)              (market prices + orderbook)
-         │                                    │
-         ▼                                    ▼
-   Ensemble Probability    ───vs───    Market Price
-   P(T > threshold) =                  best ask from
-   count(above) / members              real orderbook
-         │                                    │
-         └──────────────┬─────────────────────┘
-                        ▼
-                 Edge Detection
-              edge = model_prob - price
-              filters: ≥10% edge, ≥70% agreement,
-              spread ≤3¢, volume ≥$500
+11 Weather Models (Previous Runs API)        ECMWF Ensemble (50 members)
+  ECMWF, ICON, GFS, JMA, GEM...               raw probability distribution
+         │                                              │
+         ▼                                              │
+   LightGBM Calibrator                                  │
+   (trained on 2 years WU data)                         │
+   → calibrated T_max prediction                        │
+         │                                              │
+         └──────── shift ensemble mean ─────────────────┘
                         │
                         ▼
-                  Kelly Sizing
-              15% fractional Kelly
-              cap $35 / 5% balance
+              P(bucket) = shifted members in bucket / 50
                         │
                         ▼
-                 CLOB Executor
-              LIMIT orders only (0% fee)
-              GTC via py-clob-client
+              Gamma + CLOB price → edge = P(bucket) - ask
                         │
                         ▼
-               Position Manager
-              stop-loss 20% / trailing stop
-              take-profit 75-85¢
-              forecast-change exit
+              Kelly sizing → paper/live order
+```
+
+## Quick Start
+
+```bash
+git clone <your-repo-url>
+cd polyweather
+pip install -r requirements.txt
+
+# Test forecast engine
+python bot.py --test-forecast
+
+# Paper mode
+python bot.py --once           # single scan
+python bot.py --interval 60    # continuous (hourly)
+
+# Check results
+python bot.py --status
+
+# Live mode (after paper testing)
+cp .env.example .env
+python bot.py --live --once
+python bot.py --live
 ```
 
 ## Architecture
 
-| File | Layer | What it does |
-|------|-------|--------------|
-| `cities.py` | Config | 11 cities, airport coordinates, model per region |
-| `forecast.py` | Layer 1-2 | Ensemble data + probability engine |
-| `markets.py` | Layer 3 | Polymarket scanner + CLOB depth check |
-| `strategy.py` | Layer 4-7 | Edge detection, Kelly sizing, exits, risk |
-| `executor.py` | Layer 5 | CLOB order placement (paper + live) |
-| `bot.py` | Main | Scan loop, ties everything together |
+| File | What it does |
+|------|-------------|
+| `cities.py` | City configs — coordinates, stations, timezones |
+| `forecast.py` | ECMWF ensemble fetch + LightGBM shift |
+| `predictor.py` | LightGBM calibrator — fetches 11-model features, predicts T_max |
+| `markets.py` | Polymarket scanner + CLOB price check |
+| `strategy.py` | Edge detection, Kelly sizing, per-city limits, exits |
+| `executor.py` | Order placement (paper + live) |
+| `bot.py` | Main scan loop |
 
-## City Selection
+## Model
 
-We deliberately pick "second tier" cities — decent liquidity ($30-70K/day) but fewer competing bots than NYC/London/Chicago.
+LightGBM trained on 2 years of historical data (Feb 2024 — Apr 2026):
+- **Input:** 11 weather model forecasts + 7 context variables (cloud cover, precipitation, radiation, humidity, wind, pressure, dew point) + seasonality + inter-model statistics
+- **Target:** Wunderground daily T_max (same source as Polymarket resolution)
+- **CV bucket accuracy:** 45–63% by city (vs ECMWF raw: 20–38%)
 
-| City | Model | Members | Why |
-|------|-------|---------|-----|
-| Seoul | ECMWF IFS | 51 | Asia, moderate competition |
-| Tokyo | ECMWF IFS | 51 | High volume, ECMWF excels here |
-| Singapore | ECMWF IFS | 51 | Tropical, less volatile = consistent |
-| Dubai | ECMWF IFS | 51 | Desert = predictable, less bot activity |
-| Tel Aviv | ECMWF IFS | 51 | Unique region, few competitors |
-| Helsinki | ECMWF IFS | 51 | Nordic, good ECMWF coverage |
-| Ankara | ECMWF IFS | 51 | Low competition |
-| Toronto | GFS | 31 | N. America = GFS home turf |
-| São Paulo | ECMWF IFS | 51 | S. America, underserved |
-| Buenos Aires | ECMWF IFS | 51 | S. hemisphere diversity |
-| Wellington | ECMWF IFS | 51 | Oceania, very low competition |
+## Cities & Limits
+
+| City | CV Accuracy | Max Entry |
+|------|------------|-----------|
+| Tel Aviv | 62.6% | 50¢ |
+| Helsinki | 60.4% | 50¢ |
+| Singapore | 60.0% | 50¢ |
+| Wellington | 59.7% | 50¢ |
+| Ankara | 57.5% | 40¢ |
+| Toronto | 55.3% | 40¢ |
+| Seoul | 54.9% | 40¢ |
+| Buenos Aires | 54.6% | 40¢ |
+| Sao Paulo | 50.2% | 35¢ |
+| Tokyo | 44.9% | 25¢ |
 
 ## Entry Filters
 
-All must pass before a trade:
-- Edge ≥ 10% (model probability − market price)
-- Ensemble agreement ≥ 70% (36/51 ECMWF or 22/31 GFS)
-- Entry price ≤ 45¢
-- Bid-ask spread ≤ 3¢
-- Market volume ≥ $500
-- 2h ≤ time to resolution ≤ 72h
+- Edge ≥ 10% (P(bucket) − CLOB ask)
+- Ensemble agreement ≥ 55%
+- Per-city max entry price (see table above)
+- Volume ≥ $200
+- Spread ≤ 3¢
+- 12h ≤ time to resolution ≤ 36h (D+1 only)
+- 1 position per city per day
 
-## Risk Management
+## Risk
 
-- Max $35 per trade (5% of starting $700)
-- Max 5 simultaneous positions
-- Max 3 positions per city
-- Daily loss limit: $35 → kill switch
-- Monthly drawdown stop: -15% → full stop
 - 15% fractional Kelly sizing
+- Max $35 per trade, max 5% of balance
+- Max 8 simultaneous positions
+- Daily loss limit: $50
+- Drawdown stop: -30% from peak
+- Exits: stop-loss 20%, auto-resolution via Gamma API
 
-## Going Live
+## Data Sources
 
-1. Create Polymarket account (email login recommended)
-2. Get your private key: https://reveal.magic.link/polymarket
-3. Get your wallet address from Polymarket Settings
-4. Copy `.env.example` to `.env` and fill in your credentials
-5. Start with `--live --once` for a single scan first
-6. Monitor for a few days before continuous mode
-
-## Commands
-
-```bash
-python bot.py                    # paper mode, continuous
-python bot.py --live             # live mode, continuous
-python bot.py --once             # single scan
-python bot.py --status           # show balance + positions
-python bot.py --test-forecast    # test ensemble engine
-python bot.py --interval 15      # scan every 15 min (default 30)
-```
-
-## Data Sources (all free)
-
-- **ECMWF IFS ensemble** via Open-Meteo — 51 members, 9km resolution
-- **GFS ensemble** via Open-Meteo — 31 members, 28km resolution
-- **METAR observations** via aviationweather.gov — real-time airport temps
-- **Polymarket Gamma API** — market metadata (no auth)
-- **Polymarket CLOB API** — real orderbook (auth for trading)
+- **ECMWF 50-member ensemble** — Open-Meteo ensemble API
+- **11 model forecasts** — Open-Meteo Previous Runs API (D+1)
+- **Wunderground T_max** — Weather Company v1 API (ground truth)
+- **Polymarket markets** — Gamma API (discovery) + CLOB `/price` (real ask)
