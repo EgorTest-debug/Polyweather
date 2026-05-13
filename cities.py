@@ -70,7 +70,7 @@ CITIES = {
         "unit":      "C",
         "timezone":  "Europe/Istanbul",
         "bias_correction": 1.3,
-        "ensemble_model":  "icon_seamless",
+        "ensemble_model":  "gem_global_ensemble",
     },
 
     # ── Americas ──────────────────────────────────────────
@@ -92,7 +92,7 @@ CITIES = {
         "unit":      "C",
         "timezone":  "America/Sao_Paulo",
         "bias_correction": 1.0, 
-        "ensemble_model":  "icon_seamless",
+        "ensemble_model":  "gfs_seamless",
     },
     "buenos-aires": {
         "name":      "Buenos Aires",
@@ -102,7 +102,7 @@ CITIES = {
         "unit":      "C",
         "timezone":  "America/Argentina/Buenos_Aires",
         "bias_correction": 0.7,
-        "ensemble_model":  "icon_seamless",
+        "ensemble_model":  "ukmo_global_ensemble_20km",
     },
 
     # ── Oceania ───────────────────────────────────────────
