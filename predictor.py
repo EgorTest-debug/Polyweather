@@ -99,7 +99,6 @@ def _fetch_forecasts(lat: float, lon: float, tz: str, target_date: date) -> Opti
             "daily": "temperature_2m_max",
             "start_date": d_str, "end_date": d_str,
             "models": ",".join(MODELS),
-            "previous_day": 1,
             "timezone": tz,
         }, timeout=(5, 15))
         d1 = r1.json().get("daily", {})
@@ -117,7 +116,6 @@ def _fetch_forecasts(lat: float, lon: float, tz: str, target_date: date) -> Opti
             "daily": ",".join(CONTEXT_VARS),
             "start_date": d_str, "end_date": d_str,
             "models": "ecmwf_ifs025",
-            "previous_day": 1,
             "timezone": tz,
         }, timeout=(5, 15))
         d2 = r2.json().get("daily", {})
