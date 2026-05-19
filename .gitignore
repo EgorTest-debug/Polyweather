@@ -1,6 +1,5 @@
 .env
-data/ema_bias.json
-data/model_forecasts.csv
+data/model_forecasts_day1.csv
 data/polymarket_winners.csv
 data/state.json
 data/wu_historical.csv
@@ -12,3 +11,4 @@ __pycache__/
 TODO.md
 .venv
 test_clob.py
+data/ema_bias.json
