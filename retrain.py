@@ -115,54 +115,73 @@ def collect_forecasts(start: str, end: str) -> pd.DataFrame:
         log.info(f"  {city}...")
 
         # 1. All 11 models tmax in one request
-        try:
-            r = requests.get(PREV_RUNS_BASE, params={
-                "latitude": cfg["lat"], "longitude": cfg["lon"],
-                "hourly": "temperature_2m_previous_day1",
-                "models": ",".join(MODELS),
-                "start_date": start, "end_date": end,
-                "timezone": cfg["tz"],
-            }, timeout=60)
-            data = r.json()
+        data = None
+        for attempt in range(3):
+            try:
+                r = requests.get(PREV_RUNS_BASE, params={
+                    "latitude": cfg["lat"], "longitude": cfg["lon"],
+                    "hourly": "temperature_2m_previous_day1",
+                    "models": ",".join(MODELS),
+                    "start_date": start, "end_date": end,
+                    "timezone": cfg["tz"],
+                }, timeout=120)
+                data = r.json()
+                if not data.get("error"):
+                    break
+                log.warning(f"    tmax API error attempt {attempt+1}: {data.get('reason')}")
+            except Exception as e:
+                log.warning(f"    tmax attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                time.sleep(30)
 
-            if data.get("error"):
-                log.warning(f"    API error for {city}: {data.get('reason')}")
-                continue
-
-            hourly = data.get("hourly", {})
-            times = hourly.get("time", [])
-
-            daily_models = {}
-            for model in MODELS:
-                key = f"temperature_2m_previous_day1_{model}"
-                vals = hourly.get(key, [])
-                for t, v in zip(times, vals):
-                    day = t[:10]
-                    if v is not None:
-                        if day not in daily_models:
-                            daily_models[day] = {}
-                        daily_models[day][f"{model}_tmax"] = max(
-                            daily_models[day].get(f"{model}_tmax", -999), v
-                        )
-
-            log.info(f"    tmax: {len(daily_models)} days")
-            time.sleep(1)
-
-        except Exception as e:
-            log.error(f"    tmax error for {city}: {e}")
+        if data is None or data.get("error"):
+            log.error(f"    tmax failed after 3 attempts for {city}")
             continue
 
+        hourly = data.get("hourly", {})
+        times = hourly.get("time", [])
+
+        daily_models = {}
+        for model in MODELS:
+            key = f"temperature_2m_previous_day1_{model}"
+            vals = hourly.get(key, [])
+            for t, v in zip(times, vals):
+                day = t[:10]
+                if v is not None:
+                    if day not in daily_models:
+                        daily_models[day] = {}
+                    daily_models[day][f"{model}_tmax"] = max(
+                        daily_models[day].get(f"{model}_tmax", -999), v
+                    )
+
+        log.info(f"    tmax: {len(daily_models)} days")
+        time.sleep(1)
+
         # 2. Context variables from ecmwf
-        try:
-            ctx_vars = [f"{v}_previous_day1" for v in HOURLY_CONTEXT.values()]
-            r2 = requests.get(PREV_RUNS_BASE, params={
-                "latitude": cfg["lat"], "longitude": cfg["lon"],
-                "hourly": ",".join(ctx_vars),
-                "models": "ecmwf_ifs025",
-                "start_date": start, "end_date": end,
-                "timezone": cfg["tz"],
-            }, timeout=60)
-            data2 = r2.json()
+        ctx_vars = [f"{v}_previous_day1" for v in HOURLY_CONTEXT.values()]
+        data2 = None
+        for attempt in range(3):
+            try:
+                r2 = requests.get(PREV_RUNS_BASE, params={
+                    "latitude": cfg["lat"], "longitude": cfg["lon"],
+                    "hourly": ",".join(ctx_vars),
+                    "models": "ecmwf_ifs025",
+                    "start_date": start, "end_date": end,
+                    "timezone": cfg["tz"],
+                }, timeout=120)
+                data2 = r2.json()
+                if not data2.get("error"):
+                    break
+                log.warning(f"    context API error attempt {attempt+1}: {data2.get('reason')}")
+            except Exception as e:
+                log.warning(f"    context attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                time.sleep(30)
+
+        if data2 is None or data2.get("error"):
+            log.error(f"    context failed after 3 attempts for {city}")
+            daily_ctx = {}
+        else:
             hourly2 = data2.get("hourly", {})
             times2 = hourly2.get("time", [])
 
@@ -181,10 +200,6 @@ def collect_forecasts(start: str, end: str) -> pd.DataFrame:
 
             log.info(f"    context: {len(daily_ctx)} days")
             time.sleep(1)
-
-        except Exception as e:
-            log.error(f"    context error for {city}: {e}")
-            daily_ctx = {}
 
         # Merge
         all_dates = sorted(set(daily_models.keys()) | set(daily_ctx.keys()))
@@ -206,6 +221,18 @@ def collect_forecasts(start: str, end: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_rows)
     df = df.sort_values(["city", "date"]).reset_index(drop=True)
+
+    # Check for missing days
+    if not df.empty:
+        df["date_dt"] = pd.to_datetime(df["date"])
+        for city in df["city"].unique():
+            c = df[df["city"] == city]["date_dt"]
+            expected = pd.date_range(c.min(), c.max())
+            missing = expected.difference(c)
+            if len(missing) > 0:
+                log.warning(f"  {city}: {len(missing)} missing days — {[d.date() for d in missing[:3]]}")
+        df = df.drop(columns=["date_dt"])
+
     return df
 
 
