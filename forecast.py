@@ -242,100 +242,112 @@ def fetch_ensemble(city_key: str, forecast_days: int = 4,
                    retries: int = 3) -> Dict[date, EnsembleForecast]:
     cfg = CITIES[city_key]
     model_name = CITIES[city_key].get("ensemble_model", "icon_seamless")
+    fallback_model = "icon_seamless" if model_name != "icon_seamless" else "ecmwf_ifs025"
 
-    url = (
-        f"{ENSEMBLE_BASE}"
-        f"?latitude={cfg['lat']}&longitude={cfg['lon']}"
-        f"&daily=temperature_2m_max"
-        f"&temperature_unit=celsius"
-        f"&timezone={cfg['timezone']}"
-        f"&forecast_days={forecast_days}"
-        f"&models={model_name}"
-    )
+    models_to_try = [model_name]
+    if fallback_model != model_name:
+        models_to_try.append(fallback_model)
 
-    result: Dict[date, EnsembleForecast] = {}
+    for current_model in models_to_try:
+        url = (
+            f"{ENSEMBLE_BASE}"
+            f"?latitude={cfg['lat']}&longitude={cfg['lon']}"
+            f"&daily=temperature_2m_max"
+            f"&temperature_unit=celsius"
+            f"&timezone={cfg['timezone']}"
+            f"&forecast_days={forecast_days}"
+            f"&models={current_model}"
+        )
 
-    for attempt in range(retries):
-        try:
-            resp = requests.get(url, timeout=(5, 15))
-            data = resp.json()
+        result: Dict[date, EnsembleForecast] = {}
 
-            if data.get("error"):
-                log.warning(f"[{cfg['name']}] API error: {data.get('reason', '?')}")
-                break
+        for attempt in range(retries):
+            try:
+                resp = requests.get(url, timeout=(5, 15))
+                data = resp.json()
 
-            daily = data.get("daily", {})
-            dates_raw = daily.get("time", [])
+                if data.get("error"):
+                    log.warning(f"[{cfg['name']}] API error ({current_model}): {data.get('reason', '?')}")
+                    break
 
-            member_keys = sorted(
-                k for k in daily
-                if k.startswith("temperature_2m_max_member")
-            )
+                daily = data.get("daily", {})
+                dates_raw = daily.get("time", [])
 
-            if not member_keys:
-                log.warning(f"[{cfg['name']}] No ensemble members in response")
-                break
-
-            # Get Markov bias only if LightGBM unavailable
-            markov_bias = 0.0
-            if not LGBM_AVAILABLE:
-                markov_bias = get_adaptive_bias(city_key)
-
-            today = datetime.now(timezone.utc).date()
-            tomorrow = today + timedelta(days=1)
-
-            for i, d_str in enumerate(dates_raw):
-                d = date.fromisoformat(d_str)
-
-                # Only process D+1 — LightGBM trained on previous_day=1
-                if d != tomorrow:
-                    continue
-
-                # Collect RAW ensemble members (no correction)
-                raw_highs = []
-                for mk in member_keys:
-                    vals = daily[mk]
-                    if i < len(vals) and vals[i] is not None:
-                        raw_highs.append(round(vals[i], 1))
-
-                if not raw_highs:
-                    continue
-
-                raw_mean = statistics.mean(raw_highs)
-
-                # Try LightGBM calibration first
-                if LGBM_AVAILABLE:
-                    try:
-                        lgbm_pred = predict_temperature(city_key, d, raw_mean)
-                        if lgbm_pred is not None:
-                            highs = shift_ensemble_members(raw_highs, raw_mean, lgbm_pred)
-                            model_label = f"{model_name}+lgbm{lgbm_pred - raw_mean:+.1f}"
-                            result[d] = EnsembleForecast(
-                                city_key=city_key,
-                                target_date=d,
-                                model=model_label,
-                                member_highs=highs,
-                            )
-                            continue
-                    except Exception as e:
-                        log.debug(f"[{cfg['name']}] LightGBM failed, falling back to Markov: {e}")
-
-                # Fallback: Markov bias correction
-                highs = [round(t + markov_bias, 1) for t in raw_highs]
-                model_label = f"{model_name}+markov{markov_bias:+.1f}"
-                result[d] = EnsembleForecast(
-                    city_key=city_key,
-                    target_date=d,
-                    model=model_label,
-                    member_highs=highs,
+                member_keys = sorted(
+                    k for k in daily
+                    if k.startswith("temperature_2m_max_member")
                 )
 
-            break
+                if not member_keys:
+                    log.warning(f"[{cfg['name']}] No ensemble members ({current_model})")
+                    break
 
-        except requests.exceptions.RequestException as e:
-            log.warning(f"[{cfg['name']}] request failed (attempt {attempt+1}): {e}")
-            if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
+                # Get Markov bias only if LightGBM unavailable
+                markov_bias = 0.0
+                if not LGBM_AVAILABLE:
+                    markov_bias = get_adaptive_bias(city_key)
+
+                today = datetime.now(timezone.utc).date()
+                tomorrow = today + timedelta(days=1)
+
+                for i, d_str in enumerate(dates_raw):
+                    d = date.fromisoformat(d_str)
+
+                    # Only process D+1 — LightGBM trained on previous_day=1
+                    if d != tomorrow:
+                        continue
+
+                    # Collect RAW ensemble members (no correction)
+                    raw_highs = []
+                    for mk in member_keys:
+                        vals = daily[mk]
+                        if i < len(vals) and vals[i] is not None:
+                            raw_highs.append(round(vals[i], 1))
+
+                    if not raw_highs:
+                        continue
+
+                    raw_mean = statistics.mean(raw_highs)
+
+                    # Try LightGBM calibration first
+                    if LGBM_AVAILABLE:
+                        try:
+                            lgbm_pred = predict_temperature(city_key, d, raw_mean)
+                            if lgbm_pred is not None:
+                                highs = shift_ensemble_members(raw_highs, raw_mean, lgbm_pred)
+                                model_label = f"{current_model}+lgbm{lgbm_pred - raw_mean:+.1f}"
+                                result[d] = EnsembleForecast(
+                                    city_key=city_key,
+                                    target_date=d,
+                                    model=model_label,
+                                    member_highs=highs,
+                                )
+                                continue
+                        except Exception as e:
+                            log.debug(f"[{cfg['name']}] LightGBM failed, falling back to Markov: {e}")
+
+                    # Fallback: Markov bias correction
+                    highs = [round(t + markov_bias, 1) for t in raw_highs]
+                    model_label = f"{current_model}+markov{markov_bias:+.1f}"
+                    result[d] = EnsembleForecast(
+                        city_key=city_key,
+                        target_date=d,
+                        model=model_label,
+                        member_highs=highs,
+                    )
+
+                break
+
+            except requests.exceptions.RequestException as e:
+                log.warning(f"[{cfg['name']}] request failed ({current_model}, attempt {attempt+1}): {e}")
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+
+        # If got results with this model — return, don't try fallback
+        if result:
+            if current_model != model_name:
+                log.info(f"[{cfg['name']}] Used fallback model {current_model} instead of {model_name}")
+            return result
 
     return result
 

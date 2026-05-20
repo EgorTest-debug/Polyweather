@@ -24,22 +24,17 @@ from markets import TempBucket, WeatherEvent, fetch_clob_depth
 log = logging.getLogger("polyweather")
 
 # ─── Per-city max entry price ─────────────────────────────
-# Based on CV bucket accuracy (honest walk-forward validation):
-# >60%: can afford up to 50¢
-# 55-60%: up to 40¢
-# 50-55%: up to 35¢
-# <50%: up to 25¢
 CITY_MAX_ENTRY = {
-    "tel-aviv":     0.50,   # 62.6% CV accuracy
-    "helsinki":     0.50,   # 60.4%
-    "singapore":    0.50,   # 60.0%
-    "wellington":   0.50,   # 59.7%
-    "ankara":       0.40,   # 57.5%
-    "toronto":      0.40,   # 55.3%
-    "seoul":        0.40,   # 54.9%
-    "buenos-aires": 0.40,   # 54.6%
-    "sao-paulo":    0.35,   # 50.2%
-    "tokyo":        0.25,   # 44.9% — lowest accuracy
+    "wellington":   0.45,   # 43.8% CV
+    "helsinki":     0.45,   # 42.2% CV
+    "ankara":       0.45,   # 41.8% CV
+    "singapore":    0.45,   # 41.6% CV
+    "tel-aviv":     0.45,   # 41.4% CV
+    "buenos-aires": 0.35,   # 35.6% CV
+    "seoul":        0.25,   # 34.6% CV
+    "tokyo":        0.25,   # 32.8% CV
+    "toronto":      0.25,   # 33.3% CV
+    "sao-paulo":    0.30,   # 32.0% CV
 }
 
 # Slippage: real fill price is typically 2¢ worse than Gamma midpoint
@@ -74,7 +69,7 @@ class StrategyConfig:
     take_profit_48h:   float = 0.85    # take profit at 85¢ if 24-48h
 
     # Risk limits
-    daily_loss_limit:  float = 50.0    # stop trading after $35 loss in a day
+    daily_loss_pct:    float = 0.15    # stop trading after 15% loss in a day
     max_positions:     int   = 5       # max simultaneous positions
     max_per_city:      int   = 1       # max positions in one city
     drawdown_stop_pct: float = 0.25    # stop everything at -15% from peak
@@ -453,9 +448,10 @@ def check_risk(state: dict, config: StrategyConfig) -> dict:
     can_trade = True
     reasons = []
 
-    if daily_pnl <= -config.daily_loss_limit:
+    daily_limit = balance * config.daily_loss_pct
+    if daily_pnl <= -daily_limit:
         can_trade = False
-        reasons.append(f"daily loss ${abs(daily_pnl):.2f} >= limit ${config.daily_loss_limit}")
+        reasons.append(f"daily loss ${abs(daily_pnl):.2f} >= limit ${daily_limit:.0f} (15% of balance)")
 
     if open_count >= config.max_positions:
         can_trade = False
