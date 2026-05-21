@@ -48,6 +48,7 @@ class StrategyConfig:
     # Entry filters
     min_edge:          float = 0.10    # 10% minimum edge (after slippage)
     min_agreement:     float = 0.55    # ensemble agreement
+    min_model_prob:    float = 0.30    # minimum model probability
     max_entry_price:   float = 0.50    # global cap — per-city CITY_MAX_ENTRY overrides
     min_volume:        float = 200.0   # minimum market volume $
     max_spread:        float = 0.08    # max bid-ask spread 8¢
@@ -64,9 +65,8 @@ class StrategyConfig:
 
     # Exit rules
     stop_loss_pct:     float = 0.20    # 20% stop loss
-    trailing_trigger:  float = 0.99    # move stop to breakeven after +20%
-    take_profit_72h:   float = 0.75    # take profit at 75¢ if >48h to resolution
-    take_profit_48h:   float = 0.85    # take profit at 85¢ if 24-48h
+    trailing_trigger:  float = 0.20    # move stop to breakeven after +20%
+    take_profit:       float = 0.85    
 
     # Risk limits
     daily_loss_pct:    float = 0.15    # stop trading after 15% loss in a day
@@ -231,6 +231,9 @@ def detect_signals(
         if fc.agreement < config.min_agreement:
             continue
 
+        if model_prob < config.min_model_prob:
+            continue
+
         kelly_raw = calc_kelly(model_prob, effective_price)
         kelly = kelly_raw * config.kelly_fraction
         bet_raw = kelly * balance
@@ -388,19 +391,9 @@ def check_exits(
         if current_price <= stop:
             reason = "stop_loss" if current_price < entry else "trailing_stop"
 
-        # Take profit (based on time)
+        # Take profit
         if reason is None:
-            try:
-                end = datetime.fromisoformat(
-                    pos.get("end_date", "2099-01-01").replace("Z", "+00:00")
-                )
-                hours_left = (end - datetime.now(timezone.utc)).total_seconds() / 3600
-            except Exception:
-                hours_left = 999
-
-            if hours_left > 48 and current_price >= config.take_profit_72h:
-                reason = "take_profit"
-            elif 24 < hours_left <= 48 and current_price >= config.take_profit_48h:
+            if current_price >= config.take_profit:
                 reason = "take_profit"
 
         # Forecast changed: model shifted out of bucket

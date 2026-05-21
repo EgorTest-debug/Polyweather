@@ -78,6 +78,9 @@ def run_scan(executor, config: StrategyConfig, state: dict) -> dict:
             all_forecasts[(city, d)] = fc
 
     exits = check_exits(positions, config, all_forecasts)
+    # Save state immediately to persist any trailing stop updates
+    state["positions"] = positions
+    save_state(state)
     for ex in exits:
         mid = ex["market_id"]
         pos = positions[mid]
