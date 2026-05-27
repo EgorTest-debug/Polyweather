@@ -1,111 +1,111 @@
 # 🌤 PolyWeather
 
-Weather trading bot for Polymarket. Uses ECMWF 50-member ensemble + LightGBM calibration to find mispriced temperature markets.
+Multi-model ensemble postprocessing for daily maximum temperature forecasts at 10 globally distributed airport stations. Uses LightGBM regression with ensemble member shifting to produce calibrated bucket probability predictions.
 
-**Status:** Paper trading / pre-production
+This repository contains the code and dataset for the NLP Course final project (Spring 2026).
 
 ## How It Works
 
 ```
-11 Weather Models (Previous Runs API)        ECMWF Ensemble (50 members)
-  ECMWF, ICON, GFS, JMA, GEM...               raw probability distribution
-         │                                              │
-         ▼                                              │
-   LightGBM Calibrator                                  │
-   (trained on 2 years WU data)                         │
-   → calibrated T_max prediction                        │
-         │                                              │
-         └──────── shift ensemble mean ─────────────────┘
-                        │
-                        ▼
-              P(bucket) = shifted members in bucket / 50
-                        │
-                        ▼
-              Gamma + CLOB price → edge = P(bucket) - ask
-                        │
-                        ▼
-              Kelly sizing → paper/live order
+11 NWP Models (Previous Runs API)             ICON Ensemble (39 members)
+  ECMWF, ICON, GFS, JMA, GEM,                  raw probability distribution
+  UKMO, KNMI, DMI, CMA, MeteoFrance,                       │
+  NCEP GraphCast                                           │
+         │                                                 │
+         ▼                                                 │
+   LightGBM Regressor                                      │
+   (8,339 samples, 27 features)                            │
+   → calibrated T_max prediction                           │
+         │                                                 │
+         └─────────── shift ensemble mean ─────────────────┘
+                              │
+                              ▼
+              P(bucket) = shifted members in bucket / N
 ```
 
 ## Quick Start
 
 ```bash
-git clone <your-repo-url>
+git clone <repo-url>
 cd polyweather
 pip install -r requirements.txt
 
-# Test forecast engine
+# Collect data and train model from scratch
+python retrain.py --from-scratch
+
+# Or use the included pretrained model
 python bot.py --test-forecast
 
-# Paper mode
-python bot.py --once           # single scan
-python bot.py --interval 60    # continuous (hourly)
-
-# Check results
-python bot.py --status
-
-# Live mode (after paper testing)
-cp .env.example .env
-python bot.py --live --once
-python bot.py --live
+# Single scan / continuous run
+python bot.py --once
+python bot.py --interval 60
 ```
 
-## Architecture
+## Repository Structure
 
 | File | What it does |
 |------|-------------|
 | `cities.py` | City configs — coordinates, stations, timezones |
-| `forecast.py` | ECMWF ensemble fetch + LightGBM shift |
-| `predictor.py` | LightGBM calibrator — fetches 11-model features, predicts T_max |
-| `markets.py` | Polymarket scanner + CLOB price check |
-| `strategy.py` | Edge detection, Kelly sizing, per-city limits, exits |
-| `executor.py` | Order placement (paper + live) |
+| `forecast.py` | Ensemble fetch + LightGBM calibration |
+| `predictor.py` | LightGBM inference — fetches 11-model features, predicts T_max |
+| `markets.py` | Polymarket market scanner |
+| `strategy.py` | Edge detection, position sizing, exits |
+| `executor.py` | Order execution |
 | `bot.py` | Main scan loop |
+| `retrain.py` | Automated data collection + model retraining |
+
+## Dataset
+
+The dataset is included in `data/`:
+
+| File | Description | Rows |
+|------|-------------|------|
+| `data/model_forecasts_day1.csv` | 24-hour-ahead forecasts from 11 NWP models + 7 context variables | 8,340 |
+| `data/wu_historical.csv` | Daily T_max from Weather Underground (ground truth) | 11,138 |
+| `data/clim_normals_era5.csv` | ERA5 1991-2020 climatological normals per city/day | 3,660 |
+| `data/models/global_model_tuned.txt` | Trained LightGBM model (native format) | — |
+| `data/models/feature_cols.pkl` | Feature column list | — |
+| `data/models/best_params.json` | Optimal hyperparameters (Optuna, 80 trials) | — |
+
+**Coverage:** 10 airport stations, Feb 5, 2024 — May 18, 2026 (~28 months).
+
+**Data collection:** Run `python retrain.py --from-scratch` to reproduce the dataset from public APIs.
 
 ## Model
 
-LightGBM trained on 2 years of historical data (Feb 2024 — Apr 2026):
-- **Input:** 11 weather model forecasts + 7 context variables (cloud cover, precipitation, radiation, humidity, wind, pressure, dew point) + seasonality + inter-model statistics
-- **Target:** Wunderground daily T_max (same source as Polymarket resolution)
-- **CV bucket accuracy:** 45–63% by city (vs ECMWF raw: 20–38%)
+LightGBM regression trained on 27 features:
+- **NWP forecasts (11):** ECMWF IFS, GFS, ICON, JMA, GEM, MeteoFrance, UKMO, KNMI, DMI, CMA GRAPES, NCEP GraphCast
+- **Context (7):** Cloud cover, precipitation, radiation, humidity, wind speed, pressure, dew point (ECMWF IFS, 24h ahead)
+- **Seasonal (3):** doy_sin, doy_cos, city_id
+- **History (2):** WU T_max d-2 and d-3
+- **Ensemble stats (4):** mean, std, min, max across NWP models
 
-## Cities & Limits
+**Hyperparameters** (Optuna tuned): 313 estimators, lr=0.029, max_depth=6, num_leaves=35.
 
-| City | CV Accuracy | Max Entry |
-|------|------------|-----------|
-| Tel Aviv | 62.6% | 50¢ |
-| Helsinki | 60.4% | 50¢ |
-| Singapore | 60.0% | 50¢ |
-| Wellington | 59.7% | 50¢ |
-| Ankara | 57.5% | 40¢ |
-| Toronto | 55.3% | 40¢ |
-| Seoul | 54.9% | 40¢ |
-| Buenos Aires | 54.6% | 40¢ |
-| Sao Paulo | 50.2% | 35¢ |
-| Tokyo | 44.9% | 25¢ |
+**Honest walk-forward CV bucket accuracy: 37.9%** (1°C discretization).
 
-## Entry Filters
+## Per-city Performance
 
-- Edge ≥ 10% (P(bucket) − CLOB ask)
-- Ensemble agreement ≥ 55%
-- Per-city max entry price (see table above)
-- Volume ≥ $200
-- Spread ≤ 3¢
-- 12h ≤ time to resolution ≤ 36h (D+1 only)
-- 1 position per city per day
-
-## Risk
-
-- 15% fractional Kelly sizing
-- Max $35 per trade, max 5% of balance
-- Max 8 simultaneous positions
-- Daily loss limit: $50
-- Drawdown stop: -30% from peak
-- Exits: stop-loss 20%, auto-resolution via Gamma API
+| City | Bucket Accuracy | MAE (°C) |
+|------|----------------|----------|
+| Wellington | 43.8% | 0.75 |
+| Helsinki | 42.2% | 0.92 |
+| Ankara | 41.8% | 0.81 |
+| Singapore | 41.6% | 0.77 |
+| Tel Aviv | 41.4% | 0.78 |
+| Buenos Aires | 35.6% | 0.99 |
+| Seoul | 34.6% | 1.00 |
+| Toronto | 33.3% | 1.13 |
+| Tokyo | 32.8% | 0.98 |
+| São Paulo | 32.0% | 1.04 |
 
 ## Data Sources
 
-- **ECMWF 50-member ensemble** — Open-Meteo ensemble API
-- **11 model forecasts** — Open-Meteo Previous Runs API (D+1)
-- **Wunderground T_max** — Weather Company v1 API (ground truth)
-- **Polymarket markets** — Gamma API (discovery) + CLOB `/price` (real ask)
+- **NWP forecasts:** [Open-Meteo Previous Runs API](https://previous-runs-api.open-meteo.com/) — `temperature_2m_previous_day1` variable for 24h-ahead forecasts
+- **Ground truth:** Weather Company V1 API — daily T_max at airport ICAO stations
+- **Climatology:** [Open-Meteo Climate API](https://climate-api.open-meteo.com/) — ERA5 1991-2020 normals
+- **Markets:** Polymarket Gamma API + CLOB `/price` endpoint (downstream application)
+
+## Notes
+
+This project explores statistical postprocessing of ensemble weather forecasts — a well-established field in meteorology. The downstream application is automated trading on Polymarket temperature prediction markets, but the methodology applies to any setting requiring calibrated short-term temperature forecasts (renewable energy, agriculture, climate risk assessment).
